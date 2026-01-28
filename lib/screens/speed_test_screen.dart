@@ -1,7 +1,10 @@
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:scan_network/services/speed_test_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intl/intl.dart';
 
 class SpeedTestScreen extends StatefulWidget {
   const SpeedTestScreen({super.key});
@@ -20,6 +23,153 @@ class _SpeedTestScreenState extends State<SpeedTestScreen>
   String _unit = 'Mbps';
   bool _isTesting = false;
   String _status = 'Ready';
+
+  // History
+  List<Map<String, dynamic>> _history = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
+
+  Future<void> _loadHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? historyJson = prefs.getString('speed_test_history');
+    if (historyJson != null) {
+      setState(() {
+        _history = List<Map<String, dynamic>>.from(jsonDecode(historyJson));
+      });
+    }
+  }
+
+  Future<void> _saveResult(double dl, double ul) async {
+    final newResult = {
+      'date': DateTime.now().toIso8601String(),
+      'download': dl,
+      'upload': ul,
+    };
+
+    // Add to local state (at start)
+    setState(() {
+      _history.insert(0, newResult);
+      if (_history.length > 50) _history.removeLast(); // Keep last 50
+    });
+
+    // Save to disk
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('speed_test_history', jsonEncode(_history));
+  }
+
+  void _showHistorySheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E293B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            Text(
+              "Test History",
+              style: GoogleFonts.outfit(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Expanded(
+              child: _history.isEmpty
+                  ? const Center(
+                      child: Text(
+                        "No history yet",
+                        style: TextStyle(color: Colors.white54),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: _history.length,
+                      itemBuilder: (context, index) {
+                        final item = _history[index];
+                        final date = DateTime.parse(item['date']);
+                        final formattedDate = DateFormat(
+                          'MMM d, h:mm a',
+                        ).format(date);
+                        final dl = (item['download'] as num).toDouble();
+                        final ul = (item['upload'] as num).toDouble();
+
+                        return Card(
+                          color: Colors.white.withOpacity(0.05),
+                          margin: const EdgeInsets.only(bottom: 10),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  formattedDate,
+                                  style: const TextStyle(color: Colors.white70),
+                                ),
+                                Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.arrow_downward,
+                                      size: 16,
+                                      color: Colors.greenAccent,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${dl.toStringAsFixed(1)}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    const Icon(
+                                      Icons.arrow_upward,
+                                      size: 16,
+                                      color: Colors.purpleAccent,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${ul.toStringAsFixed(1)}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            TextButton(
+              onPressed: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.remove('speed_test_history');
+                setState(() => _history.clear());
+                if (mounted) Navigator.pop(context);
+              },
+              child: const Text(
+                "Clear History",
+                style: TextStyle(color: Colors.redAccent),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   void dispose() {
@@ -85,6 +235,8 @@ class _SpeedTestScreenState extends State<SpeedTestScreen>
           _status = 'Completed';
           _isTesting = false;
         });
+        // SAVE RESULT
+        _saveResult(_downloadRate, _uploadRate);
       },
       onError: (errorMessage, speedTestError) {
         if (!mounted) return;
@@ -120,6 +272,13 @@ class _SpeedTestScreenState extends State<SpeedTestScreen>
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'History',
+            onPressed: _showHistorySheet,
+          ),
+        ],
         flexibleSpace: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(

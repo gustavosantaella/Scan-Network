@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -9,7 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 class DeviceActionsScreen extends StatefulWidget {
   final DeviceInfo device;
 
-  const DeviceActionsScreen({Key? key, required this.device}) : super(key: key);
+  const DeviceActionsScreen({super.key, required this.device});
 
   @override
   State<DeviceActionsScreen> createState() => _DeviceActionsScreenState();
@@ -21,6 +22,60 @@ class _DeviceActionsScreenState extends State<DeviceActionsScreen> {
   List<int> _openPorts = [];
   bool _isScanningPorts = false;
   String _status = '';
+
+  // NATIVE WoL IMPLEMENTATION
+  Future<void> _wakeDevice() async {
+    final mac = widget.device.mac;
+
+    // Basic validation
+    if (mac == '00:00:00:00:00:00' || mac.length < 17) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invalid MAC Address for WoL')),
+        );
+      }
+      return;
+    }
+
+    try {
+      // 1. Clean MAC address
+      final cleanMac = mac.replaceAll(':', '').replaceAll('-', '');
+      if (cleanMac.length != 12) throw Exception('Invalid MAC length');
+
+      // 2. Parse MAC bytes
+      final macBytes = <int>[];
+      for (int i = 0; i < 12; i += 2) {
+        macBytes.add(int.parse(cleanMac.substring(i, i + 2), radix: 16));
+      }
+
+      // 3. Create Magic Packet (6x 0xFF + 16x MAC)
+      final packet = <int>[];
+      for (int i = 0; i < 6; i++) packet.add(0xFF);
+      for (int i = 0; i < 16; i++) packet.addAll(macBytes);
+
+      // 4. Send via UDP Broadcast
+      RawDatagramSocket.bind(InternetAddress.anyIPv4, 0).then((socket) {
+        socket.broadcastEnabled = true;
+        socket.send(packet, InternetAddress('255.255.255.255'), 9);
+        socket.close();
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Magic Packet sent to $mac'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error sending WoL: $e')));
+      }
+    }
+  }
 
   void _scanPorts() {
     setState(() {
@@ -53,18 +108,15 @@ class _DeviceActionsScreenState extends State<DeviceActionsScreen> {
   }
 
   Future<void> _disconnectDevice() async {
-    // 1. Copy MAC to clipboard
     await Clipboard.setData(ClipboardData(text: widget.device.mac));
 
-    // 2. Determine Router Gateway (Guessing .1)
     final parts = widget.device.ip.split('.');
-    String gatewayIp = '192.168.1.1'; // Default Fallback
+    String gatewayIp = '192.168.1.1';
     if (parts.length == 4) {
       gatewayIp = '${parts[0]}.${parts[1]}.${parts[2]}.1';
     }
     final url = Uri.parse('http://$gatewayIp');
 
-    // 3. Show Explanation Dialog
     if (!mounted) return;
     showDialog(
       context: context,
@@ -139,7 +191,7 @@ class _DeviceActionsScreenState extends State<DeviceActionsScreen> {
     final explanation = await _geminiService.explainPort(port);
 
     if (mounted) {
-      Navigator.pop(context); // Close loading
+      Navigator.pop(context);
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
@@ -161,6 +213,82 @@ class _DeviceActionsScreenState extends State<DeviceActionsScreen> {
         ),
       );
     }
+  }
+
+  Widget _buildActionCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    VoidCallback? onTap,
+    bool isLoading = false,
+    bool isDestructive = false,
+    Color? color,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E293B).withOpacity(0.8),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white.withOpacity(0.05)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: (color ?? Colors.indigo).withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: isLoading
+                    ? SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: color ?? Colors.indigoAccent,
+                        ),
+                      )
+                    : Icon(icon, color: color ?? Colors.indigoAccent),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.arrow_forward_ios,
+                size: 16,
+                color: Colors.white24,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -258,7 +386,7 @@ class _DeviceActionsScreenState extends State<DeviceActionsScreen> {
                   ),
                   const SizedBox(height: 10),
 
-                  // NEW ACTION: Disconnect (Router Kick)
+                  // DISCONNECT
                   _buildActionCard(
                     icon: Icons.block,
                     title: "Disconnect Device",
@@ -266,11 +394,23 @@ class _DeviceActionsScreenState extends State<DeviceActionsScreen> {
                     onTap: _disconnectDevice,
                     isLoading: false,
                     isDestructive: true,
+                    color: Colors.redAccent,
                   ),
 
                   const SizedBox(height: 10),
 
-                  // Action: Scan Ports
+                  // WAKE ON LAN
+                  _buildActionCard(
+                    icon: Icons.power_settings_new,
+                    title: "Wake Device (WoL)",
+                    subtitle: "Send Magic Packet to wake up",
+                    onTap: _wakeDevice,
+                    color: Colors.orangeAccent,
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // SCAN PORTS
                   _buildActionCard(
                     icon: Icons.security,
                     title: "Scan Open Ports",
@@ -366,81 +506,6 @@ class _DeviceActionsScreenState extends State<DeviceActionsScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildActionCard({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    VoidCallback? onTap,
-    bool isLoading = false,
-    bool isDestructive = false,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1E293B).withOpacity(0.8),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withOpacity(0.05)),
-          ),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.indigo.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: isLoading
-                    ? const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.indigoAccent,
-                        ),
-                      )
-                    : Icon(icon, color: Colors.indigoAccent),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(
-                Icons.arrow_forward_ios,
-                size: 16,
-                color: Colors.white24,
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

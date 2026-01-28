@@ -4,6 +4,7 @@ import 'package:scan_network/models/device_info.dart';
 import 'package:scan_network/screens/device_actions_screen.dart';
 import 'package:scan_network/services/network_scanner_service.dart';
 import 'package:scan_network/widgets/radar_view.dart';
+import 'package:share_plus/share_plus.dart';
 
 class ScannerScreen extends StatefulWidget {
   const ScannerScreen({super.key});
@@ -106,6 +107,33 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
   }
 
+  Future<void> _exportResults() async {
+    if (_devices.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("No devices to export")));
+      return;
+    }
+
+    final buffer = StringBuffer();
+    buffer.writeln("IP Address, MAC Address, Vendor, Hostname");
+
+    for (final device in _devices) {
+      buffer.writeln(
+        "${device.ip}, ${device.mac}, ${device.vendor}, ${device.name ?? ''}",
+      );
+    }
+
+    try {
+      await Share.share(
+        buffer.toString(),
+        subject: "Network Scan Export - $_subnet",
+      );
+    } catch (e) {
+      // ignore
+    }
+  }
+
   List<DeviceInfo> get _filteredDevices {
     if (_searchQuery.isEmpty) return _devices;
     return _devices.where((device) {
@@ -151,6 +179,13 @@ class _ScannerScreenState extends State<ScannerScreen> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.share),
+            tooltip: "Export Results",
+            onPressed: _exportResults,
+          ),
+        ],
         flexibleSpace: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
