@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:scan_network/models/device_info.dart';
 import 'package:scan_network/services/gemini_service.dart';
 import 'package:scan_network/services/port_scanner_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class DeviceActionsScreen extends StatefulWidget {
   final DeviceInfo device;
@@ -48,6 +50,83 @@ class _DeviceActionsScreenState extends State<DeviceActionsScreen> {
             }
           },
         );
+  }
+
+  Future<void> _disconnectDevice() async {
+    // 1. Copy MAC to clipboard
+    await Clipboard.setData(ClipboardData(text: widget.device.mac));
+
+    // 2. Determine Router Gateway (Guessing .1)
+    final parts = widget.device.ip.split('.');
+    String gatewayIp = '192.168.1.1'; // Default Fallback
+    if (parts.length == 4) {
+      gatewayIp = '${parts[0]}.${parts[1]}.${parts[2]}.1';
+    }
+    final url = Uri.parse('http://$gatewayIp');
+
+    // 3. Show Explanation Dialog
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Text(
+          'Kick Device (Router Access)',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'To disconnect this device, you must block its MAC Address in your router settings.',
+              style: TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.black26,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.copy, color: Colors.white54, size: 16),
+                  const SizedBox(width: 8),
+                  Text(
+                    widget.device.mac.toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.cyanAccent,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'MAC Address copied to clipboard!\n\nOpen Gateway ($gatewayIp) to configure?',
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.admin_panel_settings),
+            label: const Text('Open Router Admin'),
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () {
+              Navigator.pop(context);
+              launchUrl(url, mode: LaunchMode.externalApplication);
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showPortExplanation(int port) async {
@@ -179,6 +258,18 @@ class _DeviceActionsScreenState extends State<DeviceActionsScreen> {
                   ),
                   const SizedBox(height: 10),
 
+                  // NEW ACTION: Disconnect (Router Kick)
+                  _buildActionCard(
+                    icon: Icons.block,
+                    title: "Disconnect Device",
+                    subtitle: "Open Router Settings to block MAC",
+                    onTap: _disconnectDevice,
+                    isLoading: false,
+                    isDestructive: true,
+                  ),
+
+                  const SizedBox(height: 10),
+
                   // Action: Scan Ports
                   _buildActionCard(
                     icon: Icons.security,
@@ -285,6 +376,7 @@ class _DeviceActionsScreenState extends State<DeviceActionsScreen> {
     required String subtitle,
     VoidCallback? onTap,
     bool isLoading = false,
+    bool isDestructive = false,
   }) {
     return Material(
       color: Colors.transparent,

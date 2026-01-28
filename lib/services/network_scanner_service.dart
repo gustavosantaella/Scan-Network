@@ -14,73 +14,39 @@ class NetworkScannerService {
     return await _networkInfo.getWifiIP();
   }
 
+  Future<String?> getGatewayIp() async {
+    try {
+      final gateway = await _networkInfo.getWifiGatewayIP();
+      if (gateway != null && gateway.isNotEmpty && gateway != '0.0.0.0') {
+        return gateway;
+      }
+    } catch (e) {
+      // Ignore plugin errors
+    }
+
+    // Fallback: Guess based on local IP
+    final localIp = await getDeviceIp();
+    if (localIp != null) {
+      final parts = localIp.split('.');
+      if (parts.length == 4) {
+        return '${parts[0]}.${parts[1]}.${parts[2]}.1';
+      }
+    }
+    return null;
+  }
+
+  Future<int> getConnectedDevicesCount() async {
+    // A quick way is to check ARP table size.
+    // For a more accurate real-time count, a full scan is needed,
+    // but for "Router Info" page load, ARP table is a good approximation.
+    final arp = await _getArpTable();
+    return arp.length;
+  }
+
   Future<String?> getSubnet() async {
     String? ip = await getDeviceIp();
     if (ip == null) return null;
     return ip.substring(0, ip.lastIndexOf('.'));
-  }
-
-  Stream<DeviceInfo> scanNetwork() async* {
-    final subnet = await getSubnet();
-    if (subnet == null) return;
-
-    // 1. Get ARP Table (MAC Addresses)
-    final arpTable = await _getArpTable();
-
-    // 2. Ping Sweep (Active Hosts)
-    final streamController = StreamController<DeviceInfo>();
-    int activePings = 0;
-
-    for (int i = 1; i < 255; i++) {
-      final ip = '$subnet.$i';
-      activePings++;
-
-      // Optimistic ping, don't wait for each one sequentially in the loop if possible,
-      // but for simplicity in this stream generator, we might want to batch or just run it.
-      // dart_ping allows streaming results.
-
-      Ping(ip, count: 1, timeout: 1).stream
-          .listen((event) async {
-            if (event.response != null) {
-              // Host is active
-              final mac = arpTable[ip] ?? 'Unknown';
-              final vendor = await _getVendor(mac);
-              final device = DeviceInfo(ip: ip, mac: mac, vendor: vendor);
-              streamController.add(device);
-            }
-          })
-          .onDone(() {
-            activePings--;
-            if (activePings == 0 && !streamController.isClosed) {
-              // We might need a better way to close stream,
-              // but for now let's rely on the Ping streams finishing.
-              // However, tracking all 254 pings is complex in a generator.
-              // Let's try a different approach: Ping sequentially but fast?
-              // Or finding a way to await all pings?
-            }
-          });
-    }
-
-    // Better approach for Stream generator:
-    // We can yield results as we find them.
-    // Let's do a simple ping sweep first, then yield.
-    // Or simpler: Just rely on ARP table for Windows?
-    // Windows ARP table only shows devices that HAVE been communicated with.
-    // So a ping sweep IS necessary to populate the ARP table.
-
-    List<Future<void>> pingTasks = [];
-
-    for (int i = 1; i < 255; i++) {
-      final ip = '$subnet.$i';
-      pingTasks.add(_pingAndCheck(ip, arpTable, streamController));
-    }
-
-    await Future.wait(pingTasks);
-    await streamController.close();
-
-    // Wait for the stream controller to be consumed?
-    // Actually, `async*` cannot easily yield from a separate StreamController without `yield*`.
-    // Let's refactor to standard StreamController usage or just use the generator properly.
   }
 
   // Refactored Scan Method
@@ -99,45 +65,90 @@ class NetworkScannerService {
       return;
     }
 
-    // Ping Sweep to populate ARP table
-    List<Future> futures = [];
-    for (int i = 1; i < 255; i++) {
-      final ip = '$subnet.$i';
-      futures.add(Ping(ip, count: 1, timeout: 1).stream.first);
+    // List of commons ports to probe to wake up devices/ARP
+    final List<int> commonPorts = [80, 443, 135, 445, 8080];
+
+    // Discover devices in batches to avoid OS resource exhaustion
+    final int batchSize = 25;
+    for (int i = 1; i < 255; i += batchSize) {
+      final List<Future<void>> batchFutures = [];
+      for (int j = i; j < i + batchSize && j < 255; j++) {
+        final ip = '$subnet.$j';
+        batchFutures.add(_probeDevice(ip, commonPorts));
+      }
+      // Wait for the batch to finish.
+      // We don't care about results here, just that we tried to contact them
+      // to populate the system's ARP table.
+      await Future.wait(batchFutures);
     }
 
-    // Wait for pings to finish (some might timeout)
-    // We catch errors to avoid crashing on timeout
-    await Future.wait(futures.map((f) => f.catchError((e) => null)));
-
-    // Now read ARP table
+    // Now read ARP table which should be populated
     final arpTable = await _getArpTable();
 
     for (var entry in arpTable.entries) {
       final ip = entry.key;
       final mac = entry.value;
 
-      // Filter out incomplete ARPs if any
       if (mac.isEmpty) continue;
+      if (ip.endsWith('.255')) continue;
 
       final vendor = await _getVendor(mac);
-      controller.add(DeviceInfo(ip: ip, mac: mac, vendor: vendor));
+      final name = await _getHostname(ip);
+
+      controller.add(DeviceInfo(ip: ip, mac: mac, vendor: vendor, name: name));
     }
 
     controller.close();
   }
 
-  Future<void> _pingAndCheck(
-    String ip,
-    Map<String, String> arpTable,
-    StreamController<DeviceInfo> controller,
-  ) async {
-    // We just ping to ensure ARP table is updated.
+  Future<String?> _getHostname(String ip) async {
     try {
-      await Ping(ip, count: 1, timeout: 1).stream.first;
+      final socket = await InternetAddress.lookup(ip);
+      if (socket.isNotEmpty) {
+        // This is forward lookup. For reverse:
+        // There isn't a direct sync reverse lookup in dart:io easy for local.
+        // We can try InternetAddress(ip).reverse();
+        try {
+          final address = InternetAddress(ip);
+          final result = await address.reverse();
+          return result.host;
+        } catch (e) {
+          return null;
+        }
+      }
     } catch (e) {
-      // ignore
+      return null;
     }
+    return null;
+  }
+
+  /// Tries to contact the device via Ping and TCP to trigger an ARP entry
+  Future<void> _probeDevice(String ip, List<int> ports) async {
+    // 1. Try Ping (2s timeout)
+    try {
+      final ping = Ping(ip, count: 1, timeout: 2);
+      await ping.stream.first.catchError(
+        (e) => PingData(response: null, summary: null),
+      );
+    } catch (_) {}
+
+    // 2. Try TCP Connect on common ports (Fast fail)
+    // We race them: if any connects, good.
+    // Just attempting connection is often enough for ARP.
+
+    // We limit this to just one or two ports for speed if needed,
+    // but parallel is okay.
+    List<Future> tcpProbes = [];
+    for (final port in ports) {
+      tcpProbes.add(
+        Socket.connect(ip, port, timeout: const Duration(milliseconds: 500))
+            .then((socket) {
+              socket.destroy();
+            })
+            .catchError((_) {}),
+      );
+    }
+    await Future.wait(tcpProbes);
   }
 
   Future<Map<String, String>> _getArpTable() async {
@@ -217,6 +228,41 @@ class NetworkScannerService {
     }
 
     return arpEntries;
+  }
+
+  Future<Map<String, dynamic>> getPublicIpInfo() async {
+    try {
+      final response = await http.get(Uri.parse('http://ip-api.com/json'));
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      }
+    } catch (e) {
+      print('Error getting public IP: $e');
+    }
+    return {};
+  }
+
+  Future<String> getLocalMacAddress() async {
+    if (Platform.isWindows) {
+      try {
+        final result = await Process.run('getmac', ['/FO', 'CSV', '/NH']);
+        if (result.exitCode == 0) {
+          // Output format: "00-11-22-33-44-55","\Device\Tcpip_..."
+          final line = result.stdout.toString().split('\n').first;
+          final parts = line.split(',');
+          if (parts.isNotEmpty) {
+            String mac = parts[0].replaceAll('"', '').replaceAll('-', ':');
+            return mac;
+          }
+        }
+      } catch (e) {
+        print('Error getting local MAC: $e');
+      }
+    } else if (Platform.isLinux || Platform.isMacOS) {
+      // Simplified attempt for Unix-likes (often requires tools or parsing ifconfig)
+      // Keeping it simple for the user's primarily Windows context.
+    }
+    return "Unavailable";
   }
 
   Future<String> _getVendor(String mac) async {
