@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:scan_network/screens/network_tools_screen.dart';
 import 'package:scan_network/services/network_scanner_service.dart';
 import 'package:scan_network/services/port_scanner_service.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -125,12 +126,22 @@ class _RouterInfoScreenState extends State<RouterInfoScreen> {
           style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
         ),
         backgroundColor: Colors.transparent,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.construction, color: Colors.cyanAccent),
+            tooltip: 'Network Tools',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NetworkToolsScreen()),
+            ),
+          ),
+        ],
         flexibleSpace: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [Colors.black.withOpacity(0.7), Colors.transparent],
+              colors: [Colors.black.withValues(alpha: 0.7), Colors.transparent],
             ),
           ),
         ),

@@ -1,8 +1,10 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:scan_network/models/device_info.dart';
 import 'package:scan_network/screens/device_actions_screen.dart';
+import 'package:scan_network/services/favorites_service.dart';
 import 'package:scan_network/services/network_scanner_service.dart';
 import 'package:scan_network/services/permission_service.dart';
 import 'package:scan_network/widgets/radar_view.dart';
@@ -17,6 +19,7 @@ class ScannerScreen extends StatefulWidget {
 
 class _ScannerScreenState extends State<ScannerScreen> {
   final NetworkScannerService _scannerService = NetworkScannerService();
+  final FavoritesService _favoritesService = FavoritesService();
   final TextEditingController _searchController = TextEditingController();
   List<DeviceInfo> _devices = [];
   DeviceInfo? _myDevice;
@@ -30,11 +33,18 @@ class _ScannerScreenState extends State<ScannerScreen> {
   String _localMac = 'Checking...';
   bool _showPublicIp = false;
   bool _showMac = false;
+  Set<String> _savedIps = {}; // IPs currently in favorites
 
   @override
   void initState() {
     super.initState();
     _initPermissionsAndFetch();
+    _loadFavorites();
+  }
+
+  Future<void> _loadFavorites() async {
+    final all = await _favoritesService.getAll();
+    if (mounted) setState(() => _savedIps = all.map((d) => d.ip).toSet());
   }
 
   Future<void> _initPermissionsAndFetch() async {
@@ -139,6 +149,144 @@ class _ScannerScreenState extends State<ScannerScreen> {
     } catch (e) {
       // ignore
     }
+  }
+
+  Future<void> _toggleFavorite(DeviceInfo device) async {
+    final isSaved = _savedIps.contains(device.ip);
+    if (isSaved) {
+      await _favoritesService.deleteDevice(device.ip);
+      setState(() => _savedIps.remove(device.ip));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Removed from Saved'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } else {
+      await _favoritesService.saveDevice(device);
+      setState(() => _savedIps.add(device.ip));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✓ Saved to Favorites'),
+            backgroundColor: Colors.amber,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
+  void _showDeviceMenu(BuildContext ctx, DeviceInfo device) {
+    showModalBottomSheet(
+      context: ctx,
+      backgroundColor: const Color(0xFF1E293B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              device.ip,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+            Text(
+              device.vendor,
+              style: const TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            const Divider(color: Colors.white12),
+            ListTile(
+              leading: const Icon(Icons.copy, color: Colors.cyanAccent),
+              title: const Text(
+                'Copy IP Address',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                Clipboard.setData(ClipboardData(text: device.ip));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('IP copied'),
+                    duration: Duration(seconds: 1),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.fingerprint,
+                color: Colors.purpleAccent,
+              ),
+              title: const Text(
+                'Copy MAC Address',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                Clipboard.setData(ClipboardData(text: device.mac));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('MAC copied'),
+                    duration: Duration(seconds: 1),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                _savedIps.contains(device.ip) ? Icons.star : Icons.star_outline,
+                color: Colors.amber,
+              ),
+              title: Text(
+                _savedIps.contains(device.ip)
+                    ? 'Remove from Saved'
+                    : 'Save to Favorites',
+                style: const TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                _toggleFavorite(device);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.open_in_new, color: Colors.white54),
+              title: const Text(
+                'Open Device Actions',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                Navigator.push(
+                  ctx,
+                  MaterialPageRoute(
+                    builder: (_) => DeviceActionsScreen(device: device),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   List<DeviceInfo> get _filteredDevices {
@@ -539,6 +687,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                                 );
                               }
                               final device = displayDevices[index];
+                              final isSaved = _savedIps.contains(device.ip);
                               return GestureDetector(
                                 onTap: () {
                                   Navigator.push(
@@ -549,7 +698,36 @@ class _ScannerScreenState extends State<ScannerScreen> {
                                     ),
                                   );
                                 },
-                                child: DeviceCard(device: device),
+                                onLongPress: () =>
+                                    _showDeviceMenu(context, device),
+                                child: Stack(
+                                  children: [
+                                    DeviceCard(device: device),
+                                    // Star badge
+                                    Positioned(
+                                      top: 4,
+                                      right: 4,
+                                      child: GestureDetector(
+                                        onTap: () => _toggleFavorite(device),
+                                        child: AnimatedSwitcher(
+                                          duration: const Duration(
+                                            milliseconds: 200,
+                                          ),
+                                          child: Icon(
+                                            isSaved
+                                                ? Icons.star
+                                                : Icons.star_outline,
+                                            key: ValueKey(isSaved),
+                                            color: isSaved
+                                                ? Colors.amber
+                                                : Colors.white24,
+                                            size: 20,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               );
                             },
                           ),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:scan_network/screens/favorites_screen.dart';
 import 'package:scan_network/screens/router_info_screen.dart';
 import 'package:scan_network/screens/scanner_screen.dart';
 import 'package:scan_network/screens/speed_test_screen.dart';
@@ -46,6 +47,7 @@ class _MainScreenState extends State<MainScreen> {
     const ScannerScreen(),
     const SpeedTestScreen(),
     const RouterInfoScreen(),
+    const FavoritesScreen(),
   ];
 
   @override
@@ -70,10 +72,10 @@ class _MainScreenState extends State<MainScreen> {
           ),
           child: NavigationBar(
             height: 70,
-            backgroundColor: const Color(0xFF0F172A).withOpacity(0.95),
+            backgroundColor: const Color(0xFF0F172A).withValues(alpha: 0.95),
             indicatorColor: Theme.of(
               context,
-            ).colorScheme.primary.withOpacity(0.2),
+            ).colorScheme.primary.withValues(alpha: 0.2),
             selectedIndex: _currentIndex,
             onDestinationSelected: (index) {
               setState(() {
@@ -95,6 +97,11 @@ class _MainScreenState extends State<MainScreen> {
                 icon: Icon(Icons.router_outlined),
                 selectedIcon: Icon(Icons.router),
                 label: 'Router',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.bookmark_outline),
+                selectedIcon: Icon(Icons.bookmark),
+                label: 'Saved',
               ),
             ],
           ),
