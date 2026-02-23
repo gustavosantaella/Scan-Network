@@ -154,6 +154,9 @@ class NetworkScannerService {
   Future<Map<String, String>> _getArpTable() async {
     final Map<String, String> arpEntries = {};
 
+    // iOS does not support Process.run — ARP table cannot be read.
+    if (Platform.isIOS) return arpEntries;
+
     // Try running 'ip neigh' (Linux/Android)
     try {
       final result = await Process.run('ip', ['neigh']);
@@ -243,26 +246,72 @@ class NetworkScannerService {
   }
 
   Future<String> getLocalMacAddress() async {
+    if (Platform.isIOS) {
+      // iOS has permanently blocked MAC address access since iOS 7.
+      return 'N/A (restricted by iOS)';
+    }
+
+    if (Platform.isAndroid) {
+      // Android: read own MAC from the ARP table entry for wlan0.
+      try {
+        final result = await Process.run('cat', [
+          '/sys/class/net/wlan0/address',
+        ]);
+        if (result.exitCode == 0) {
+          final mac = result.stdout.toString().trim();
+          if (mac.isNotEmpty && mac != '02:00:00:00:00:00') {
+            return mac;
+          }
+        }
+      } catch (_) {}
+
+      // Fallback: read from /proc/net/arp looking for own IP.
+      try {
+        final localIp = await getDeviceIp();
+        final result = await Process.run('cat', ['/proc/net/arp']);
+        if (result.exitCode == 0 && localIp != null) {
+          for (final line in result.stdout.toString().split('\n').skip(1)) {
+            final parts = line.trim().split(RegExp(r'\s+'));
+            if (parts.length >= 4 && parts[0] == localIp) {
+              final mac = parts[3];
+              if (mac != '00:00:00:00:00:00') return mac;
+            }
+          }
+        }
+      } catch (_) {}
+
+      return 'N/A (restricted)';
+    }
+
     if (Platform.isWindows) {
       try {
         final result = await Process.run('getmac', ['/FO', 'CSV', '/NH']);
         if (result.exitCode == 0) {
-          // Output format: "00-11-22-33-44-55","\Device\Tcpip_..."
           final line = result.stdout.toString().split('\n').first;
           final parts = line.split(',');
           if (parts.isNotEmpty) {
-            String mac = parts[0].replaceAll('"', '').replaceAll('-', ':');
-            return mac;
+            return parts[0].replaceAll('"', '').replaceAll('-', ':');
           }
         }
       } catch (e) {
-        print('Error getting local MAC: $e');
+        // ignore
       }
-    } else if (Platform.isLinux || Platform.isMacOS) {
-      // Simplified attempt for Unix-likes (often requires tools or parsing ifconfig)
-      // Keeping it simple for the user's primarily Windows context.
     }
-    return "Unavailable";
+
+    if (Platform.isLinux || Platform.isMacOS) {
+      try {
+        final result = await Process.run('sh', [
+          '-c',
+          "ip link show | grep -E 'link/ether' | awk '{print \$2}' | head -1",
+        ]);
+        if (result.exitCode == 0) {
+          final mac = result.stdout.toString().trim();
+          if (mac.isNotEmpty) return mac;
+        }
+      } catch (_) {}
+    }
+
+    return 'Unavailable';
   }
 
   Future<String> _getVendor(String mac) async {

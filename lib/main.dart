@@ -64,7 +64,7 @@ class _MainScreenState extends State<MainScreen> {
         ),
         child: NavigationBarTheme(
           data: NavigationBarThemeData(
-            labelTextStyle: MaterialStateProperty.all(
+            labelTextStyle: WidgetStateProperty.all(
               GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.w500),
             ),
           ),

@@ -25,6 +25,19 @@ class _DeviceActionsScreenState extends State<DeviceActionsScreen> {
 
   // NATIVE WoL IMPLEMENTATION
   Future<void> _wakeDevice() async {
+    // iOS does not allow raw UDP broadcast sockets from user-space apps.
+    if (Platform.isIOS) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Wake-on-LAN is not supported on iOS'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
     final mac = widget.device.mac;
 
     // Basic validation

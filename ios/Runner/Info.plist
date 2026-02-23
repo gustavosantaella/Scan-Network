@@ -47,5 +47,12 @@
 		<true/>
 		<key>UIStatusBarHidden</key>
 		<false/>
+		<key>NSLocalNetworkUsageDescription</key>
+		<string>NetScanner Pro needs access to your local network to discover devices and diagnose your connection.</string>
+		<key>NSBonjourServices</key>
+		<array>
+			<string>_http._tcp</string>
+			<string>_https._tcp</string>
+		</array>
 	</dict>
 </plist>

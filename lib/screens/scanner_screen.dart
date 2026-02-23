@@ -1,8 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:scan_network/models/device_info.dart';
 import 'package:scan_network/screens/device_actions_screen.dart';
 import 'package:scan_network/services/network_scanner_service.dart';
+import 'package:scan_network/services/permission_service.dart';
 import 'package:scan_network/widgets/radar_view.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -32,7 +34,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchNetworkInfo();
+    _initPermissionsAndFetch();
+  }
+
+  Future<void> _initPermissionsAndFetch() async {
+    await PermissionService.requestNetworkPermissions();
+    await _fetchNetworkInfo();
   }
 
   Future<void> _fetchNetworkInfo() async {
@@ -212,6 +219,41 @@ class _ScannerScreenState extends State<ScannerScreen> {
           SafeArea(
             child: Column(
               children: [
+                // iOS limitation banner
+                if (Platform.isIOS)
+                  Container(
+                    margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Colors.orange.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          color: Colors.orange,
+                          size: 18,
+                        ),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Network scanning is limited on iOS. Device discovery may show fewer results than Android.',
+                            style: TextStyle(
+                              color: Colors.orange,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 // Info Card
                 GestureDetector(
                   onTap: () {
