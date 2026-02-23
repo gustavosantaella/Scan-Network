@@ -1,4 +1,4 @@
-package com.example.scan_network
+package com.nexosoft.scannetwork
 
 import io.flutter.embedding.android.FlutterActivity
 
